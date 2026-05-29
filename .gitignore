@@ -1,0 +1,47 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Environment / secrets
+.env
+.env.*
+config.toml
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+diskcache/
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Generated reports
+reports/
