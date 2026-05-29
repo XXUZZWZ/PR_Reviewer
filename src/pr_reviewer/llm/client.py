@@ -26,17 +26,11 @@ class LLMClient:
         system_prompt: str,
         pr_context: str,
         file_context: str,
-    ) -> str | None:
-        """Send a per-file analysis request. Returns JSON response text or None on failure.
+    ) -> tuple[str, int, int] | None:
+        """Send a per-file analysis request. Returns (text, input_tokens, output_tokens) or None."""
 
-        Uses Claude-compatible Messages API with prompt caching markers.
-        The system prompt and PR context are shared across calls (cacheable).
-        """
         messages = [
-            {
-                "role": "user",
-                "content": f"{pr_context}\n\n{file_context}",
-            },
+            {"role": "user", "content": f"{pr_context}\n\n{file_context}"},
         ]
 
         for attempt in range(3):
@@ -45,12 +39,7 @@ class LLMClient:
                     model=self._config.model,
                     max_tokens=self._config.max_output_tokens,
                     temperature=self._config.temperature,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system_prompt,
-                        },
-                    ],
+                    system=[{"type": "text", "text": system_prompt}],
                     messages=messages,
                 )
 
@@ -63,7 +52,9 @@ class LLMClient:
                     block.text for block in content
                     if hasattr(block, "text")
                 )
-                return text
+                inp = response.usage.input_tokens if response.usage else 0
+                out = response.usage.output_tokens if response.usage else 0
+                return text, inp, out
 
             except RateLimitError:
                 wait = 2 ** attempt * 5

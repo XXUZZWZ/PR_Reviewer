@@ -131,9 +131,11 @@ def review(
 
             # Build prompt and call LLM
             file_context = build_file_context(cf, dep_context, linter_findings, file_content)
-            raw_response = llm.analyze_file(SYSTEM_PROMPT, pr_context, file_context)
+            result = llm.analyze_file(SYSTEM_PROMPT, pr_context, file_context)
 
-            if raw_response:
+            if result:
+                raw_response, inp_tok, out_tok = result
+                total_tokens += inp_tok + out_tok
                 parsed = parse_file_analysis(raw_response)
                 if parsed:
                     findings = []
@@ -164,7 +166,8 @@ def review(
                         linter_correlation=parsed.get("linter_correlation", ""),
                     )
                     # Translate to Chinese
-                    translate_file_analysis(fa, settings.llm)
+                    tr_tok = translate_file_analysis(fa, settings.llm)
+                    total_tokens += tr_tok
                     file_analyses.append(fa)
                 else:
                     console.print(f"  [yellow]Failed to parse LLM response for {cf.path}[/]")

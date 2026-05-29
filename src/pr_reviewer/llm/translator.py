@@ -22,8 +22,8 @@ Rules:
 Return ONLY a JSON object with the same keys, values translated to Chinese."""
 
 
-def translate_file_analysis(fa: FileAnalysis, config: LLMConfig) -> None:
-    """Translate summary and findings in-place. Uses flash model for cost."""
+def translate_file_analysis(fa: FileAnalysis, config: LLMConfig) -> int:
+    """Translate summary and findings in-place. Returns tokens used."""
 
     # Collect translatable texts
     texts: dict[str, str] = {}
@@ -46,7 +46,7 @@ def translate_file_analysis(fa: FileAnalysis, config: LLMConfig) -> None:
         finding_texts.append(ft)
 
     if not texts and not any(ft for ft in finding_texts):
-        return
+        return 0
 
     payload = json.dumps({**texts, "findings": finding_texts}, ensure_ascii=False)
 
@@ -66,12 +66,15 @@ def translate_file_analysis(fa: FileAnalysis, config: LLMConfig) -> None:
                 system=[{"type": "text", "text": TRANSLATE_SYSTEM}],
                 messages=[{"role": "user", "content": payload}],
             )
+            tokens = 0
+            if response.usage:
+                tokens = response.usage.input_tokens + response.usage.output_tokens
             text = "".join(
                 b.text for b in response.content if hasattr(b, "text")
             )
             result = _parse_json(text)
             if not result:
-                return
+                return tokens
 
             if "summary" in result:
                 fa.summary_zh = str(result["summary"])
@@ -91,7 +94,7 @@ def translate_file_analysis(fa: FileAnalysis, config: LLMConfig) -> None:
                         fa.findings[i].description_zh = str(tr["description"])
                     if "suggestion" in tr:
                         fa.findings[i].suggestion_zh = str(tr["suggestion"])
-            return
+            return tokens
 
         except RateLimitError:
             time.sleep(3 * (attempt + 1))
@@ -101,7 +104,7 @@ def translate_file_analysis(fa: FileAnalysis, config: LLMConfig) -> None:
                 time.sleep(2)
         except Exception as e:
             logger.warning("Translation error for %s: %s", fa.file_path, e)
-            return
+            return 0
 
 
 def _parse_json(raw: str) -> dict | None:
