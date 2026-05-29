@@ -188,7 +188,7 @@
 <div class="file">
   <div class="fhead">
     <span class="fpath">{{ file.file_path }}</span>
-    <a class="fopen" href="{{ source_url(file.file_path, 1) }}" target="_blank">open &nearr;</a>
+    <a class="fopen" href="{{ source_url(file.file_path, 1) }}" target="_blank">打开 / open &nearr;</a>
   </div>
 
   {% if file.summary_zh or file.summary %}
@@ -202,7 +202,7 @@
   <div class="diffbox">
     <div class="diffhd">
       <span>变更 / Changes &mdash; +{{ file.additions }} &minus;{{ file.deletions }}</span>
-      <a href="{{ source_url(file.file_path, 1) }}" target="_blank">查看源码 &nearr;</a>
+      <a href="{{ source_url(file.file_path, 1) }}" target="_blank">查看源码 / view source &nearr;</a>
     </div>
     <pre>{% for line in file.diff.split('\n') %}
 {% if line.startswith('@@') %}
@@ -251,7 +251,7 @@
     <div class="codebox">
       <div class="codehd">
         <span>{{ file.file_path }}</span>
-        <a href="{{ source_url(file.file_path, finding.location.line_start or 1) }}" target="_blank">查看源码 &nearr;</a>
+        <a href="{{ source_url(file.file_path, finding.location.line_start or 1) }}" target="_blank">查看源码 / view source &nearr;</a>
       </div>
       <pre>{% set lines = finding.code_snippet.split('\n') %}
 {% for line in lines %}
@@ -281,8 +281,8 @@
 
 <!-- ══════════════════════ FOOTER ══════════════════════ -->
 <div class="ftr">
-  <span>{{ report.model_used }} &middot; {{ report.total_tokens_used }} tokens</span>
-  <span>PR Reviewer</span>
+  <span>模型 / Model: {{ report.model_used }} &middot; {{ report.total_tokens_used }} tokens</span>
+  <span>由 PR Reviewer 生成</span>
 </div>
 
 </body>
