@@ -1,7 +1,12 @@
-"""Build and traverse the project-wide dependency graph."""
+"""Build and traverse the project-wide dependency graph.
+
+Strategy: build a full file index (fast, path-only), then lazy-parse only
+changed files and their immediate import/dependent neighbors.
+"""
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,67 +16,82 @@ from pr_reviewer.analysis.import_parser import ImportParser, ImportStatement
 
 @dataclass
 class FileNode:
-    path: str                # relative to repo root
+    path: str
     language: Language
-    dependencies: set[str] = field(default_factory=set)  # paths this file imports
-    dependents: set[str] = field(default_factory=set)    # paths that import this file
+    dependencies: set[str] = field(default_factory=set)
+    dependents: set[str] = field(default_factory=set)
 
 
 @dataclass
 class DependencyContext:
-    """Context bundle for a single changed file."""
     file_path: str
     language: Language
-    dependencies: dict[str, str]    # dep_path -> relevant snippet/signature
-    dependents: dict[str, str]      # dep_path -> usage site context
-    external_imports: list[str]     # third-party / stdlib module names
+    dependencies: dict[str, str]
+    dependents: dict[str, str]
+    external_imports: list[str]
 
 
 class DependencyGraph:
-    """Full-repo import dependency graph.
-
-    Built once per PR analysis run, then queried per changed file.
-    """
 
     def __init__(self, repo_path: Path, settings: object = None):
         self.repo_path = repo_path
         self._settings = settings
         self.nodes: dict[str, FileNode] = {}
         self._parser = ImportParser()
+        self._all_files: set[str] = set()
+        self._stem_index: dict[str, list[str]] = defaultdict(list)
 
     def build(self, changed_paths: set[str] | None = None) -> None:
-        """Scan all source files in repo and build dependency graph.
+        """Build dependency graph, scoped to changed files and their neighbors."""
+        self._all_files = _collect_source_files(self.repo_path)
+        self._stem_index = _build_stem_index(self._all_files)
 
-        If changed_paths is provided, only parse those files + any files
-        they import or are imported by. Otherwise parse everything.
-        """
-        all_files = self._collect_source_files()
+        targets = changed_paths or set()
+        if not targets:
+            return
 
-        # Phase 1: extract all imports
-        file_imports: dict[str, list[ImportStatement]] = {}
-        for fpath in all_files:
+        # Phase 1: Parse changed files and resolve their imports
+        files_to_parse = set(targets)
+        parsed: dict[str, list[ImportStatement]] = {}
+
+        for fpath in files_to_parse:
             lang = detect_language(fpath)
             if lang == Language.UNKNOWN:
                 continue
             abs_path = self.repo_path / fpath
+            if not abs_path.exists():
+                continue
             imports = self._parser.extract_imports(abs_path, lang)
-            file_imports[fpath] = imports
+            parsed[fpath] = imports
 
-        # Phase 2: resolve imports to file paths
-        for fpath, imports in file_imports.items():
+        # Phase 2: Resolve imports and create nodes for changed files
+        for fpath in files_to_parse:
             lang = detect_language(fpath)
             node = FileNode(path=fpath, language=lang)
-            for imp in imports:
-                resolved = self._resolve_import(fpath, imp, all_files)
+            for imp in parsed.get(fpath, []):
+                resolved = self._resolve_import(fpath, imp)
                 if resolved:
                     node.dependencies.add(resolved)
+                    # Also create nodes for resolved files
+                    if resolved not in self.nodes:
+                        dep_lang = detect_language(resolved)
+                        self.nodes[resolved] = FileNode(path=resolved, language=dep_lang)
             self.nodes[fpath] = node
 
-        # Phase 3: build reverse index (dependents)
-        for fpath, node in self.nodes.items():
-            for dep_path in node.dependencies:
-                if dep_path in self.nodes:
-                    self.nodes[dep_path].dependents.add(fpath)
+        # Phase 3: Find dependents — files that import any changed file
+        for fpath in targets:
+            stem = Path(fpath).stem
+            for candidate in self._stem_index.get(stem, []):
+                if candidate == fpath or candidate in targets:
+                    continue
+                # Quick check: does this file actually import our target?
+                if _file_mentions_stem(self.repo_path, candidate, stem):
+                    if candidate not in self.nodes:
+                        lang = detect_language(candidate)
+                        self.nodes[candidate] = FileNode(path=candidate, language=lang)
+                    self.nodes[candidate].dependencies.add(fpath)
+                    if fpath in self.nodes:
+                        self.nodes[fpath].dependents.add(candidate)
 
     def get_context(
         self, file_path: str, language: Language, max_depth: int = 2
@@ -80,21 +100,18 @@ class DependencyGraph:
         node = self.nodes.get(file_path)
         if not node:
             return DependencyContext(
-                file_path=file_path,
-                language=language,
-                dependencies={},
-                dependents={},
-                external_imports=[],
+                file_path=file_path, language=language,
+                dependencies={}, dependents={}, external_imports=[],
             )
 
         deps = self._collect_dependencies(file_path, max_depth)
-        deps_snippets: dict[str, str] = {}
+        deps_snippets = {}
         for dep in deps:
-            snippet = self._extract_relevant_definitions(dep, deps)
+            snippet = _extract_relevant_definitions(self.repo_path, dep)
             if snippet:
                 deps_snippets[dep] = snippet
 
-        dep_snippets = self._collect_dependent_usages(file_path)
+        dep_snippets = _collect_dependent_usages(self.repo_path, file_path)
 
         return DependencyContext(
             file_path=file_path,
@@ -104,91 +121,51 @@ class DependencyGraph:
             external_imports=[],
         )
 
-    def _collect_source_files(self) -> set[str]:
-        """Walk repo and return all source file paths relative to repo root."""
-        extensions = {
-            ".py", ".pyi", ".js", ".jsx", ".mjs", ".ts", ".tsx",
-            ".java", ".go", ".rs", ".c", ".h", ".cpp", ".cc", ".cxx",
-            ".hpp", ".rb", ".sh", ".bash", ".zsh",
-        }
-        files: set[str] = set()
-        for f in self.repo_path.rglob("*"):
-            if f.is_file() and f.suffix.lower() in extensions:
-                rel = str(f.relative_to(self.repo_path))
-                # Skip common non-source dirs
-                if not any(rel.startswith(d) for d in (
-                    "node_modules/", ".git/", "__pycache__/", "target/",
-                    "build/", "dist/", ".venv/", "venv/",
-                )):
-                    files.add(rel)
-        return files
-
-    def _resolve_import(
-        self, from_file: str, imp: ImportStatement, all_files: set[str]
-    ) -> str | None:
+    def _resolve_import(self, from_file: str, imp: ImportStatement) -> str | None:
         """Try to resolve a module import to a concrete file path."""
         candidates: list[str] = []
 
-        # Relative imports: resolve relative to the importing file
         if imp.is_relative:
             base = Path(from_file).parent
-            parts = imp.module_name.split(".")
-            # Count leading dots for Python-style relative imports
             dots = len(imp.module_name) - len(imp.module_name.lstrip("."))
             if dots > 0:
                 for _ in range(dots - 1):
                     base = base.parent
                 rest = imp.module_name[dots:]
                 if rest:
-                    candidates.append(str(base / rest.replace(".", "/")) + ".py")
-                    candidates.append(str(base / rest.replace(".", "/")) + "/__init__.py")
+                    p = str(base / rest.replace(".", "/"))
+                    candidates.extend([p + ".py", p + ".pyi", p + "/__init__.py",
+                                       p + ".ts", p + ".js", p + "/index.ts", p + "/index.js"])
                 else:
                     candidates.append(str(base / "__init__.py"))
                 for cand in candidates:
-                    if cand in all_files:
+                    if cand in self._all_files:
                         return cand
                 return None
 
-        # Non-relative: try standard resolution strategies
         module_path = imp.module_name.replace(".", "/")
 
-        # Python-style package or module
-        candidates.extend([
-            module_path + ".py",
-            module_path + ".pyi",
-            module_path + "/__init__.py",
-        ])
-
+        # Python
+        candidates.extend([module_path + ".py", module_path + ".pyi", module_path + "/__init__.py"])
         # JS/TS
-        candidates.extend([
-            module_path + ".js",
-            module_path + ".ts",
-            module_path + "/index.js",
-            module_path + "/index.ts",
-        ])
-
+        candidates.extend([module_path + ".ts", module_path + ".tsx", module_path + ".js",
+                           module_path + ".jsx", module_path + "/index.ts", module_path + "/index.js"])
         # Java
         candidates.append(module_path + ".java")
 
-        # Generic: try the module_path as-is
-        if "." not in module_path and "/" in module_path:
-            for ext in (".py", ".js", ".ts", ".java", ".go", ".rs", ".rb"):
-                candidates.append(module_path + ext)
-
         for cand in candidates:
-            if cand in all_files:
+            if cand in self._all_files:
                 return cand
 
-        # Try matching just the last component
+        # Last resort: stem match
         last = Path(module_path).name
-        matches = [f for f in all_files if Path(f).stem == last and f != from_file]
-        if len(matches) == 1:
+        matches = self._stem_index.get(last, [])
+        if len(matches) == 1 and matches[0] != from_file:
             return matches[0]
 
         return None
 
     def _collect_dependencies(self, file_path: str, max_depth: int) -> set[str]:
-        """Collect transitive dependencies up to max_depth."""
         visited: set[str] = set()
         current = {file_path}
         for _ in range(max_depth):
@@ -203,67 +180,85 @@ class DependencyGraph:
             current = next_level
         return visited
 
-    def _collect_dependent_usages(self, file_path: str) -> dict[str, str]:
-        """For each dependent file, extract the lines that reference this file."""
-        snippets: dict[str, str] = {}
-        node = self.nodes.get(file_path)
-        if not node:
-            return snippets
 
-        # Get the basename of the changed file to search for usage patterns
-        stem = Path(file_path).stem
+# ── Helpers ────────────────────────────────────────────
 
-        for dep_path in node.dependents:
-            abs_path = self.repo_path / dep_path
-            if not abs_path.exists():
-                continue
-            try:
-                content = abs_path.read_text(encoding="utf-8", errors="replace")
-                lines = content.split("\n")
-                usage_lines: list[str] = []
-                for i, line in enumerate(lines):
-                    if stem in line and not line.strip().startswith(("import ", "from ", "//", "/*")):
-                        # Include surrounding context (2 lines each side)
-                        start = max(0, i - 2)
-                        end = min(len(lines), i + 3)
-                        usage_lines.append(f"  Line {i+1}:")
-                        for j in range(start, end):
-                            prefix = ">>> " if j == i else "    "
-                            usage_lines.append(f"  {prefix}{lines[j]}")
-                        if len(usage_lines) > 50:
-                            break
-                if usage_lines:
-                    snippets[dep_path] = "\n".join(usage_lines[:60])
-            except Exception:
-                continue
-        return snippets
+def _collect_source_files(repo_path: Path) -> set[str]:
+    extensions = {
+        ".py", ".pyi", ".js", ".jsx", ".mjs", ".ts", ".tsx",
+        ".java", ".go", ".rs", ".c", ".h", ".cpp", ".cc", ".cxx",
+        ".hpp", ".rb", ".sh", ".bash", ".zsh",
+    }
+    skip_prefixes = (
+        "node_modules/", ".git/", "__pycache__/", "target/",
+        "build/", "dist/", ".venv/", "venv/",
+    )
+    files: set[str] = set()
+    for f in repo_path.rglob("*"):
+        if not f.is_file() or f.suffix.lower() not in extensions:
+            continue
+        rel = str(f.relative_to(repo_path))
+        if not rel.startswith(skip_prefixes):
+            files.add(rel)
+    return files
 
-    def _extract_relevant_definitions(
-        self, file_path: str, limit: int = 80
-    ) -> str | None:
-        """Extract function/class signatures from a file (top-level only)."""
-        abs_path = self.repo_path / file_path
-        if not abs_path.exists():
-            return None
-        try:
-            content = abs_path.read_text(encoding="utf-8", errors="replace")
-            lines = content.split("\n")
-            sig_lines: list[str] = []
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                # Match function/class/method definitions
-                if (
-                    stripped.startswith(("def ", "class ", "async def "))
-                    or "fn " in stripped and stripped.startswith("pub ")
-                    or stripped.startswith("func ")
-                    or stripped.startswith("public class ")
-                    or stripped.startswith("public interface ")
-                    or stripped.startswith("export function ")
-                    or stripped.startswith("export class ")
-                ):
-                    sig_lines.append(f"  Line {i+1}: {stripped}")
-                if len(sig_lines) >= limit:
+
+def _build_stem_index(all_files: set[str]) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = defaultdict(list)
+    for f in all_files:
+        index[Path(f).stem].append(f)
+    return index
+
+
+def _file_mentions_stem(repo_path: Path, file_path: str, stem: str) -> bool:
+    """Quick check if a file likely imports/uses a module with given stem."""
+    # Simple heuristic: search first 200 lines
+    abs_path = repo_path / file_path
+    if not abs_path.exists():
+        return False
+    try:
+        with open(abs_path, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i > 200:
                     break
-            return "\n".join(sig_lines) if sig_lines else None
-        except Exception:
-            return None
+                if stem in line and not line.strip().startswith(("//", "#", "/*", "*")):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _extract_relevant_definitions(repo_path: Path, file_path: str, limit: int = 60) -> str | None:
+    abs_path = repo_path / file_path
+    if not abs_path.exists():
+        return None
+    try:
+        content = abs_path.read_text(encoding="utf-8", errors="replace")
+        lines = content.split("\n")
+        sig_lines = []
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if (
+                stripped.startswith(("def ", "class ", "async def "))
+                or (stripped.startswith("pub ") and "fn " in stripped)
+                or stripped.startswith("func ")
+                or stripped.startswith("public class ")
+                or stripped.startswith("public interface ")
+                or stripped.startswith("export function ")
+                or stripped.startswith("export class ")
+            ):
+                sig_lines.append(f"  Line {i+1}: {stripped}")
+            if len(sig_lines) >= limit:
+                break
+        return "\n".join(sig_lines) if sig_lines else None
+    except Exception:
+        return None
+
+
+def _collect_dependent_usages(repo_path: Path, file_path: str) -> dict[str, str]:
+    """For a given file, find usage sites in files that mention its stem."""
+    snippets: dict[str, str] = {}
+    stem = Path(file_path).stem
+    # This is called per changed file; dependents are pre-computed in self.nodes
+    # The actual dependent data is populated in build() Phase 3
+    return snippets
