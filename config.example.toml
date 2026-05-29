@@ -1,0 +1,25 @@
+[github]
+# GitHub personal access token (or set GITHUB_TOKEN env var)
+token = ""
+# For GitHub Enterprise: base_url = "https://github.mycompany.com/api/v3"
+
+[llm]
+# DeepSeek API (Anthropic-compatible format)
+provider = "deepseek"
+model = "deepseek-v4-pro"
+api_key = ""
+base_url = "https://api.deepseek.com/anthropic"
+max_output_tokens = 8192
+temperature = 0.3
+
+[analysis]
+max_dependency_depth = 2
+include_test_files = true
+
+[linters]
+enabled = true
+timeout_seconds = 60
+
+[report]
+terminal_verbosity = "default"
+save_path = ""
