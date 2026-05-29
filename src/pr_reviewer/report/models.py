@@ -19,6 +19,7 @@ class Finding(BaseModel):
     description: str = ""
     suggestion: str = ""
     confidence: float = 0.0
+    code_snippet: str = ""
     linter_corroboration: str | None = None
 
 

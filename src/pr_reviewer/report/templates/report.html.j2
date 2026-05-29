@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR #{{ report.pr_info.pr_number }} &mdash; {{ report.pr_info.title }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: #fff; color: #111; font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 1.6; }
+
+  body { max-width: 900px; margin: 0 auto; padding: 48px 28px 64px; }
+
+  /* ── horizontal rules ─── */
+  hr { border: none; border-top: 1px solid #000; margin: 0; }
+  hr.thick { border-width: 3px; }
+  hr.thin { border-width: 1px; border-color: #ccc; }
+
+  /* ── header ─── */
+  .hdr { margin-bottom: 32px; }
+  .hdr .num { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: #555; margin-bottom: 8px; }
+  .hdr h1 { font-size: 22px; font-weight: 700; line-height: 1.3; margin-bottom: 10px; }
+  .hdr .meta { font-size: 12px; color: #555; display: flex; flex-wrap: wrap; gap: 6px 20px; }
+  .hdr .meta .add { color: #111; }
+  .hdr .meta .del { color: #888; }
+  .hdr .meta a { color: #111; }
+
+  /* ── verdict box ─── */
+  .verdict { border: 1px solid #000; padding: 16px 20px; margin: 32px 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .verdict .vleft { display: flex; align-items: center; gap: 14px; }
+  .verdict .vtext { font-size: 16px; font-weight: 700; }
+  .verdict .vdate { font-size: 11px; color: #888; margin-top: 2px; }
+  .verdict .vcounts { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* ── severity count tags ─── */
+  .sc { font-size: 10px; font-weight: 700; padding: 3px 8px; border: 1px solid #ccc; letter-spacing: 0.06em; }
+  .sc.crit { border-color: #c00; color: #c00; }
+  .sc.high { border-color: #d80; color: #d80; }
+  .sc.med  { border-color: #a90; color: #a90; }
+  .sc.low  { border-color: #06c; color: #06c; }
+  .sc.info { border-color: #999; color: #999; }
+
+  /* ── section headings ─── */
+  .sec { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: #888; margin: 44px 0 12px; }
+
+  /* ── cross-cutting ─── */
+  .cc { margin-bottom: 8px; padding: 6px 0 6px 14px; border-left: 4px solid #ccc; font-size: 13px; }
+  .cc.crit { border-left-color: #c00; }
+  .cc.high { border-left-color: #d80; }
+  .cc.med  { border-left-color: #a90; }
+  .cc.low  { border-left-color: #06c; }
+
+  /* ── file block ─── */
+  .file { margin-bottom: 40px; }
+  .file .fhead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
+  .file .fpath { font-size: 16px; font-weight: 700; }
+  .file .fopen { font-size: 11px; color: #888; text-decoration: none; border-bottom: 1px dotted #aaa; }
+  .file .fopen:hover { color: #000; border-color: #000; }
+  .file .fsum { font-size: 13px; color: #555; margin: 8px 0 18px 0; padding-left: 0; line-height: 1.7; }
+
+  /* ── finding ─── */
+  .fnd { margin-bottom: 20px; padding: 12px 0 12px 18px; border-left: 4px solid #ccc; }
+  .fnd.crit { border-left-color: #c00; }
+  .fnd.high { border-left-color: #d80; }
+  .fnd.med  { border-left-color: #a90; }
+  .fnd.low  { border-left-color: #06c; }
+  .fnd.info { border-left-color: #999; }
+
+  .fnd .ftop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .fnd .fsev { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; padding: 2px 7px; border: 1px solid #ccc; }
+  .fnd.crit .fsev { border-color: #c00; color: #c00; }
+  .fnd.high .fsev { border-color: #d80; color: #d80; }
+  .fnd.med  .fsev { border-color: #a90; color: #a90; }
+  .fnd.low  .fsev { border-color: #06c; color: #06c; }
+  .fnd.info .fsev { border-color: #999; color: #999; }
+
+  .fnd .fmeta { font-size: 11px; color: #888; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .fnd .fmeta a { color: #111; text-decoration: none; border-bottom: 1px dotted #aaa; }
+  .fnd .fmeta a:hover { border-color: #000; }
+
+  .fnd .ftitle { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .fnd .fdesc { font-size: 13px; color: #333; line-height: 1.7; margin-bottom: 12px; }
+
+  /* ── suggestion block ─── */
+  .sug { border: 1px solid #000; padding: 12px 16px; margin-bottom: 14px; font-size: 13px; line-height: 1.7; }
+  .sug .suglbl { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #888; margin-bottom: 4px; }
+
+  /* ── code block ─── */
+  .codebox { border: 1px solid #000; margin-bottom: 14px; }
+  .codebox .codehd { font-size: 10px; color: #888; padding: 6px 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; font-weight: 500; }
+  .codebox .codehd a { color: #111; text-decoration: none; border-bottom: 1px dotted #aaa; font-size: 10px; }
+  .codebox .codehd a:hover { border-color: #000; }
+  .codebox pre { margin: 0; padding: 12px 0; overflow-x: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.8; }
+  .codebox .line { display: block; padding: 0 12px; }
+  .codebox .line.hl { background: #f4f4f4; }
+  .codebox .ln { display: inline-block; width: 40px; text-align: right; color: #bbb; margin-right: 14px; user-select: none; font-size: 11px; }
+  .codebox .ln a { color: #bbb; text-decoration: none; }
+  .codebox .ln a:hover { color: #000; }
+  .codebox .cmt { color: #aaa; font-style: italic; }
+
+  /* ── no findings ─── */
+  .clean { font-size: 13px; color: #888; padding: 12px 0 12px 18px; border-left: 4px solid #0a0; }
+
+  /* ── footer ─── */
+  .ftr { margin-top: 56px; padding-top: 12px; border-top: 1px solid #000; display: flex; justify-content: space-between; font-size: 11px; color: #888; }
+
+  @media (max-width: 700px) {
+    body { padding: 24px 14px; }
+    .hdr h1 { font-size: 17px; }
+    .verdict { flex-direction: column; align-items: flex-start; }
+  }
+
+  @media print {
+    html { font-size: 11px; }
+    body { max-width: none; padding: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════ HEADER ══════════════════════ -->
+<div class="hdr">
+  <div class="num">PR #{{ report.pr_info.pr_number }}</div>
+  <h1>{{ report.pr_info.title }}</h1>
+  <div class="meta">
+    <span>{{ report.pr_info.owner }}/{{ report.pr_info.repo }}</span>
+    <span>{{ report.pr_info.base_branch }} &larr; {{ report.pr_info.head_branch }}</span>
+    <span class="add">+{{ report.pr_info.stats.total_additions }}</span>
+    <span class="del">&minus;{{ report.pr_info.stats.total_deletions }}</span>
+    <span>{{ report.pr_info.stats.total_files }} files</span>
+  </div>
+</div>
+<hr class="thick">
+
+<!-- ══════════════════════ VERDICT ══════════════════════ -->
+{% set ov = report.overall %}
+{% set vcls = 'crit' if ov.critical_count > 0 else 'high' if ov.high_count > 0 else 'med' %}
+<div class="verdict">
+  <div class="vleft">
+    <span class="vtext">{{ ov.verdict }}</span>
+    <div>
+      <div class="vdate">{{ report.generated_at }}</div>
+    </div>
+  </div>
+  <div class="vcounts">
+    {% if ov.critical_count > 0 %}<span class="sc crit">CRIT {{ ov.critical_count }}</span>{% endif %}
+    {% if ov.high_count > 0 %}<span class="sc high">HIGH {{ ov.high_count }}</span>{% endif %}
+    {% if ov.medium_count > 0 %}<span class="sc med">MED {{ ov.medium_count }}</span>{% endif %}
+    {% if ov.low_count > 0 %}<span class="sc low">LOW {{ ov.low_count }}</span>{% endif %}
+    {% if ov.info_count > 0 %}<span class="sc info">INFO {{ ov.info_count }}</span>{% endif %}
+  </div>
+</div>
+
+<!-- ══════════════════════ CROSS-CUTTING ══════════════════════ -->
+{% if report.cross_cutting %}
+<div class="sec">Cross-cutting</div>
+{% for cc in report.cross_cutting %}
+<div class="cc {{ cc.severity }}">
+  <strong>{{ cc.title }}</strong>
+  {% if cc.description %}<span style="color:#888;"> &mdash; {{ cc.description }}</span>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- ══════════════════════ FILES ══════════════════════ -->
+<div class="sec">Files</div>
+
+{% for file in report.files %}
+<div class="file">
+  <div class="fhead">
+    <span class="fpath">{{ file.file_path }}</span>
+    <a class="fopen" href="{{ source_url(file.file_path, 1) }}" target="_blank">open &nearr;</a>
+  </div>
+
+  {% if file.summary %}
+  <div class="fsum">{{ file.summary }}</div>
+  {% endif %}
+
+  {% for finding in file.findings %}
+  <div class="fnd {{ finding.severity }}">
+    <div class="ftop">
+      <span class="fsev">{{ finding.severity }}</span>
+      <span class="fmeta">
+        <span>{{ finding.category }}</span>
+        {% if finding.location.line_start %}
+        <span>
+          <a href="{{ source_url(file.file_path, finding.location.line_start) }}" target="_blank">
+            L{{ finding.location.line_start }}{% if finding.location.line_end %}&ndash;L{{ finding.location.line_end }}{% endif %}
+          </a>
+        </span>
+        {% endif %}
+        <span>{{ "%.0f"|format(finding.confidence * 100) }}%</span>
+      </span>
+    </div>
+
+    <div class="ftitle">{{ finding.title }}</div>
+
+    {% if finding.description %}
+    <div class="fdesc">{{ finding.description }}</div>
+    {% endif %}
+
+    {% if finding.code_snippet %}
+    <div class="codebox">
+      <div class="codehd">
+        <span>{{ file.file_path }}</span>
+        <a href="{{ source_url(file.file_path, finding.location.line_start or 1) }}" target="_blank">view source &nearr;</a>
+      </div>
+      <pre>{% set lines = finding.code_snippet.split('\n') %}
+{% for line in lines %}
+{% set lineno = finding.location.line_start + loop.index0 if finding.location.line_start else loop.index0 + 1 %}
+{% set is_hl = lineno >= (finding.location.line_start or 0) and lineno <= (finding.location.line_end or 0) %}
+<span class="line{% if is_hl %} hl{% endif %}"><span class="ln"><a href="{{ source_url(file.file_path, lineno) }}">{{ lineno }}</a></span>{{ line }}</span>
+{% endfor %}</pre>
+    </div>
+    {% endif %}
+
+    {% if finding.suggestion %}
+    <div class="sug">
+      <div class="suglbl">&rarr; SUGGESTION</div>
+      {{ finding.suggestion }}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if not file.findings %}
+  <div class="clean">No issues found.</div>
+  {% endif %}
+</div>
+<hr class="thin">
+{% endfor %}
+
+<!-- ══════════════════════ FOOTER ══════════════════════ -->
+<div class="ftr">
+  <span>{{ report.model_used }} &middot; {{ report.total_tokens_used }} tokens</span>
+  <span>PR Reviewer</span>
+</div>
+
+</body>
+</html>

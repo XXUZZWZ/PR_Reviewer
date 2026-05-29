@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 import json
+import logging
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -27,6 +28,7 @@ from pr_reviewer.llm.response_parser import parse_file_analysis
 from pr_reviewer.report.models import Report, FileAnalysis, Finding, FileLocation
 from pr_reviewer.report.generator import build_report
 from pr_reviewer.report.formatter import format_report
+from pr_reviewer.report.renderer import render_html, render_markdown, detect_platform
 from pr_reviewer.utils.git import ensure_repo_cloned, get_file_content
 
 app = typer.Typer(
@@ -42,7 +44,8 @@ logger = logging.getLogger(__name__)
 def review(
     pr_url: str = typer.Argument(help="GitHub PR URL, e.g. https://github.com/owner/repo/pull/123"),
     config: Path | None = typer.Option(None, "--config", "-c", help="Path to TOML config file"),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Save report to file"),
+    output_dir: Path | None = typer.Option(None, "--output", "-o", help="Output directory for reports"),
+    fmt: str = typer.Option("all", "--format", "-f", help="Report format: json, md, html, all"),
     model: str | None = typer.Option(None, "--model", "-m", help="Override LLM model"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     skip_linters: bool = typer.Option(False, "--skip-linters", help="Skip linter checks"),
@@ -60,6 +63,7 @@ def review(
 
     # ── Step 1: Parse PR URL ──
     owner, repo, pr_num = parse_pr_url(pr_url)
+    platform = detect_platform(pr_url)
     console.print(f"Fetching PR #{pr_num} from {owner}/{repo}...")
 
     # ── Step 2: Fetch PR metadata ──
@@ -131,21 +135,23 @@ def review(
             if raw_response:
                 parsed = parse_file_analysis(raw_response)
                 if parsed:
-                    findings = [
-                        Finding(
+                    findings = []
+                    for f in parsed.get("findings", []):
+                        loc = FileLocation(
+                            line_start=f.get("location", {}).get("line_start"),
+                            line_end=f.get("location", {}).get("line_end"),
+                        )
+                        snippet = _extract_code_snippet(cf.diff, file_content, loc)
+                        findings.append(Finding(
                             severity=f.get("severity", "info"),
                             category=f.get("category", "code_smell"),
-                            location=FileLocation(
-                                line_start=f.get("location", {}).get("line_start"),
-                                line_end=f.get("location", {}).get("line_end"),
-                            ),
+                            location=loc,
                             title=f.get("title", ""),
                             description=f.get("description", ""),
                             suggestion=f.get("suggestion", ""),
                             confidence=f.get("confidence", 0.0),
-                        )
-                        for f in parsed.get("findings", [])
-                    ]
+                            code_snippet=snippet,
+                        ))
                     file_analyses.append(FileAnalysis(
                         file_path=cf.path,
                         summary=parsed.get("summary", ""),
@@ -164,18 +170,56 @@ def review(
 
     # ── Step 6: Build and render report ──
     report = build_report(pr_info, file_analyses, settings.llm.model, total_tokens)
+    # Inject head_sha for URL generation
+    report.pr_info["head_sha"] = pr_info.head_sha
     format_report(report)
 
-    # ── Step 7: Save if requested ──
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(report.model_dump(), indent=2, ensure_ascii=False))
-        console.print(f"\n[dim]Report saved to {output}[/]")
+    # ── Step 7: Save reports ──
+    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if output_dir:
+        out_path = output_dir
+    else:
+        out_path = Path("reports") / f"pr_{pr_num}_{date_str}"
 
-    if settings.report.save_path:
-        save_path = Path(settings.report.save_path)
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        save_path.write_text(json.dumps(report.model_dump(), indent=2, ensure_ascii=False))
+    out_path.mkdir(parents=True, exist_ok=True)
+    formats = ["json", "md", "html"] if fmt == "all" else [fmt]
+
+    for f in formats:
+        if f == "json":
+            p = out_path / f"report.json"
+            p.write_text(json.dumps(report.model_dump(), indent=2, ensure_ascii=False))
+        elif f == "md":
+            p = out_path / f"report.md"
+            p.write_text(render_markdown(report, platform))
+        elif f == "html":
+            p = out_path / f"report.html"
+            p.write_text(render_html(report, platform))
+        console.print(f"[dim]Saved: {p}[/]")
+
+    console.print(f"\n[bold green]Reports saved to {out_path.absolute()}[/]")
+
+
+def _extract_code_snippet(diff: str, file_content: str | None, loc: FileLocation) -> str:
+    """Extract code lines around a finding's location from diff or file content."""
+    if not loc.line_start:
+        return ""
+
+    # Prefer file content (has full context)
+    source = file_content
+    if source:
+        lines = source.split("\n")
+    elif diff:
+        # Fall back to diff lines that are context or additions
+        diff_lines = [l[1:] for l in diff.split("\n") if l and l[0] in (" ", "+", "-")]
+        lines = diff_lines
+    else:
+        return ""
+
+    start = max(0, loc.line_start - 4)
+    end = min(len(lines), (loc.line_end or loc.line_start) + 3)
+    snippet_lines = lines[start:end]
+
+    return "\n".join(snippet_lines)
 
 
 @app.command()
