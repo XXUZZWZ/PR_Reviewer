@@ -1,124 +1,142 @@
 # PR Reviewer
 
-AI-powered CLI tool for automated GitHub Pull Request code review.
+AI 驱动的 Pull Request 代码评审 CLI 工具。
 
-## Features
-
-- **PR Change Summary** — Summarizes code changes to help reviewers quickly understand scope and intent
-- **Risk Detection** — Identifies security vulnerabilities, performance issues, logic errors, and code quality problems
-- **Review Suggestions** — Generates specific, actionable review comments with severity, category, and confidence scoring
-- **Dependency-Aware Analysis** — Analyzes each changed file with its dependency chain (imports + importers) for cross-file context
-- **Linter Integration** — Runs language-specific linters (pylint, eslint, clippy, etc.) and feeds results to LLM as signals
-- **Rich Terminal Output** — Colored tables, severity trees, and structured findings in the terminal
-
-## Installation
-
-Requires Python 3.11+.
+## 快速开始
 
 ```bash
-git clone https://github.com/XXUZZWZ/PR_Reviewer.git
+# 1. 安装
 cd PR_Reviewer
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+
+# 2. 配置（二选一）
+
+## 方式A：配置文件
+cp config.example.toml config.toml
+# 编辑 config.toml，填入 GitHub token 和 DeepSeek API key
+
+## 方式B：环境变量
+export GITHUB_TOKEN="github_pat_xxxx"
+export ANTHROPIC_API_KEY="sk-xxxx"
+
+# 3. 使用
+source .venv/bin/activate
+pr-review review https://github.com/owner/repo/pull/123 -c config.toml
 ```
 
-Or with dev dependencies:
+## 命令参考
+
+```
+pr-review review <PR_URL> [选项]
+```
+
+### PR URL 格式
+
+支持三种写法，效果相同：
+
+```
+https://github.com/owner/repo/pull/123
+owner/repo/123
+owner/repo#123
+```
+
+### 常用选项
+
+| 选项 | 说明 | 示例 |
+|------|------|------|
+| `-c, --config` | 指定配置文件 | `-c config.toml` |
+| `-f, --format` | 输出格式 | `-f json` / `-f md` / `-f html` / `-f all`（默认） |
+| `-o, --output` | 自定义输出目录 | `-o ./my-review/` |
+| `-m, --model` | 切换模型 | `-m deepseek-v4-flash`（更快更便宜） |
+| `-v, --verbose` | 显示详细日志 | `-v` |
+| `--skip-linters` | 跳过 linter 检查 | `--skip-linters` |
+
+### 示例
 
 ```bash
-pip install -e ".[dev]"
+# 完整评审，输出所有格式到默认目录 reports/pr_123_日期/
+pr-review review owner/repo/123 -c config.toml
+
+# 只要 HTML 报告，保存到指定目录
+pr-review review owner/repo/123 -c config.toml -f html -o ./review/
+
+# 用 flash 模型（更快更便宜），跳过 linter
+pr-review review owner/repo/123 -c config.toml -m deepseek-v4-flash --skip-linters
 ```
 
-## Configuration
+## 输出说明
 
-Create a `config.toml` (see `config.example.toml`):
+每次评审默认生成到 `reports/pr_{编号}_{时间}/` 目录：
+
+```
+reports/pr_87882_20260529_135744/
+├── report.json   ← 完整 JSON 数据（含中英文双语内容）
+├── report.md     ← Markdown 格式，可直接贴到 GitHub issue
+└── report.html   ← HTML 网页，浏览器打开查看
+```
+
+**报告内容**：
+- 文件完整 diff（新增/删除行高亮）
+- 每个 finding 含：严重度、分类、标题、描述、建议、置信度
+- 中英双语（中文在上，英文在下）
+- 行号可点击，直接跳转 GitHub 对应文件位置
+
+## 配置文件
 
 ```toml
 [github]
-token = "ghp_xxxx"          # GitHub personal access token
+token = "github_pat_xxxx"
 
 [llm]
-model = "deepseek-v4-pro"    # LLM model
-api_key = "sk-xxxx"          # API key
+provider = "deepseek"
+model = "deepseek-v4-pro"       # deepseek-v4-pro 或 deepseek-v4-flash
+api_key = "sk-xxxx"
 base_url = "https://api.deepseek.com/anthropic"
+max_output_tokens = 8192
+temperature = 0.3
+
+[analysis]
+max_dependency_depth = 2        # 依赖链最大深度
+include_test_files = true       # 是否评审测试文件
+
+[linters]
+enabled = true
+timeout_seconds = 60
+
+[report]
+terminal_verbosity = "default"  # minimal / default / verbose
+save_path = ""                  # 留空 = 自动保存到 reports/
 ```
 
-Or use environment variables:
+## 支持的语言和 Linter
 
-```bash
-export GITHUB_TOKEN="ghp_xxxx"
-export ANTHROPIC_API_KEY="sk-xxxx"
-```
-
-## Usage
-
-```bash
-# Review a PR
-pr-review https://github.com/owner/repo/pull/123
-
-# With custom config
-pr-review https://github.com/owner/repo/pull/123 -c config.toml
-
-# Save report to file
-pr-review https://github.com/owner/repo/pull/123 -o report.json
-
-# Skip linters (LLM-only analysis)
-pr-review https://github.com/owner/repo/pull/123 --skip-linters
-
-# Verbose output
-pr-review https://github.com/owner/repo/pull/123 -v
-```
-
-Also supports short PR URL formats:
-
-```bash
-pr-review owner/repo/123
-pr-review owner/repo#123
-```
-
-## Supported Languages
-
-| Language | Linters |
-|----------|---------|
+| 语言 | 自动调用的工具 |
+|------|---------------|
 | Python | pylint, mypy, bandit |
-| JavaScript / TypeScript | eslint, tsc |
-| Java | javac -Xlint, checkstyle |
-| Go | go vet, golint, staticcheck |
+| JavaScript/TypeScript | eslint |
+| Go | go vet |
 | Rust | clippy |
 | Shell | shellcheck |
+| 其他 | 纯 LLM 分析 |
 
-Languages without linter support still receive LLM-only analysis.
+工具未安装时会自动跳过，不影响评审。
 
-## Architecture
+## 工作流程
 
 ```
-pr-review <url>
-  ├── 1. Parse PR URL → (owner, repo, pr_number)
-  ├── 2. Fetch PR metadata (files, diff, stats) via GitHub API
-  ├── 3. Shallow clone repo at PR head SHA
-  ├── 4. Build dependency graph (imports → files, importers → files)
-  ├── 5. For each changed file:
-  │     ├── Detect language
-  │     ├── Run linters (graceful degradation if missing)
-  │     ├── Collect dependency context (deps + dependents)
-  │     ├── Build prompt with diff + context + linter signals
-  │     └── Call LLM → parse structured JSON response
-  ├── 6. Generate report (per-file + cross-cutting findings)
-  └── 7. Format output (terminal + optional JSON save)
+输入 PR URL
+  → 解析 (owner, repo, pr_number)
+  → GitHub API 获取 PR 元数据和 diff
+  → 浅克隆仓库
+  → 构建依赖图（变更文件的 import 和被 import 关系）
+  → 逐个文件：
+      ├── 检测语言
+      ├── 运行 linter（如有）
+      ├── 组装依赖上下文（import 了什么 / 被谁 import）
+      ├── 构建 prompt → 调用 LLM
+      ├── 调用 flash 模型翻译为中文
+      └── 解析结构化结果
+  → 生成报告（JSON + MD + HTML）
+  → 终端预览
 ```
-
-## Key Design Decisions
-
-- **Model Choice**: Uses a DeepSeek-compatible Anthropic API with prompt caching. Shared prompt sections (system prompt, PR overview) are cached to reduce costs on multi-file PRs.
-- **Per-File over Whole-PR**: Each file is analyzed individually with its dependency context, keeping token budgets manageable while preserving cross-file awareness.
-- **Hybrid Analysis**: Linters provide structured, deterministic signals (no false positives on syntax errors). The LLM handles semantic understanding, context-aware reasoning, and cross-cutting concerns.
-- **Dependency Chain Context**: For each changed file, the system extracts function/class signatures of imported symbols and call sites of dependent files — giving the LLM enough context to catch breaking changes without blowing the token budget.
-
-## Future Directions
-
-- Support for additional code hosting platforms (GitLab, Bitbucket)
-- Custom rule engine for project-specific review policies
-- Incremental review mode (review subsequent commits on the same PR)
-- Reviewer feedback loop for improving analysis accuracy over time
-
-## License
-
-MIT
