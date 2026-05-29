@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from pr_reviewer.config.settings import Settings
@@ -230,6 +232,156 @@ def _extract_code_snippet(diff: str, file_content: str | None, loc: FileLocation
     snippet_lines = lines[start:end]
 
     return "\n".join(snippet_lines)
+
+
+# ── Config subcommands ───────────────────────────────────────────
+
+config_app = typer.Typer(help="Manage configuration", no_args_is_help=True)
+app.add_typer(config_app, name="config")
+
+DEFAULT_CONFIG_PATH = Path("config.toml")
+
+
+@config_app.command()
+def init(
+    path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--path", "-p", help="Config file path"),
+) -> None:
+    """Interactively create a config.toml."""
+    if path.exists():
+        overwrite = typer.confirm(f"{path} already exists. Overwrite?")
+        if not overwrite:
+            console.print("[dim]Aborted.[/]")
+            return
+
+    console.print("[bold]PR Reviewer — Configuration Setup[/]\n")
+
+    gh_token = typer.prompt("GitHub personal access token", default="", hide_input=True)
+    gh_url = typer.prompt("GitHub API URL (Enterprise only)", default="https://api.github.com")
+
+    console.print()
+    llm_key = typer.prompt("LLM API key", default="", hide_input=True)
+    llm_model = typer.prompt("Default model", default="deepseek-v4-pro")
+    llm_url = typer.prompt("LLM base URL (Anthropic-compatible)", default="https://api.deepseek.com/anthropic")
+
+    console.print()
+    dep_depth = typer.prompt("Max dependency depth", default=2, type=int)
+    include_tests = typer.confirm("Include test files in review?", default=True)
+    linter_timeout = typer.prompt("Linter timeout (seconds)", default=60, type=int)
+
+    content = f"""[github]
+token = "{gh_token}"
+base_url = "{gh_url}"
+
+[llm]
+provider = "deepseek"
+model = "{llm_model}"
+api_key = "{llm_key}"
+base_url = "{llm_url}"
+max_output_tokens = 8192
+temperature = 0.3
+
+[analysis]
+max_dependency_depth = {dep_depth}
+include_test_files = {"true" if include_tests else "false"}
+
+[linters]
+enabled = true
+timeout_seconds = {linter_timeout}
+
+[report]
+terminal_verbosity = "default"
+save_path = ""
+"""
+    path.write_text(content)
+    console.print(f"\n[bold green]Config saved to {path.absolute()}[/]")
+
+
+@config_app.command()
+def show(
+    path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c", help="Config file path"),
+) -> None:
+    """Show current effective configuration."""
+    settings = Settings.load(path)
+
+    table = Table(title="Current Configuration", show_header=False, border_style="dim")
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+
+    table.add_section()
+    table.add_row("[bold]github.token[/]", _mask(settings.github.token))
+    table.add_row("[bold]github.base_url[/]", settings.github.base_url)
+    table.add_section()
+    table.add_row("[bold]llm.provider[/]", settings.llm.provider)
+    table.add_row("[bold]llm.model[/]", settings.llm.model)
+    table.add_row("[bold]llm.api_key[/]", _mask(settings.llm.api_key))
+    table.add_row("[bold]llm.base_url[/]", settings.llm.base_url)
+    table.add_row("[bold]llm.max_output_tokens[/]", str(settings.llm.max_output_tokens))
+    table.add_row("[bold]llm.temperature[/]", str(settings.llm.temperature))
+    table.add_section()
+    table.add_row("[bold]analysis.max_dependency_depth[/]", str(settings.analysis.max_dependency_depth))
+    table.add_row("[bold]analysis.include_test_files[/]", str(settings.analysis.include_test_files))
+    table.add_section()
+    table.add_row("[bold]linters.enabled[/]", str(settings.linters.enabled))
+    table.add_row("[bold]linters.timeout_seconds[/]", str(settings.linters.timeout_seconds))
+    table.add_section()
+    table.add_row("[bold]report.terminal_verbosity[/]", settings.report.terminal_verbosity)
+    table.add_row("[bold]report.save_path[/]", settings.report.save_path or "(auto: reports/)")
+    table.add_section()
+    table.add_row("Config file", str(path.absolute()) if path.exists() else "(not found — using defaults + env)")
+
+    console.print(table)
+
+
+@config_app.command()
+def set(
+    key: str = typer.Argument(help="Config key, e.g. llm.model"),
+    value: str = typer.Argument(help="New value"),
+    path: Path = typer.Option(DEFAULT_CONFIG_PATH, "--path", "-p", help="Config file path"),
+) -> None:
+    """Set a value in config.toml (creates file if missing)."""
+    if not path.exists():
+        console.print(f"[yellow]{path} not found. Run 'pr-review config init' first.[/]")
+        raise typer.Exit(1)
+
+    try:
+        section, key_name = key.split(".", 1)
+    except ValueError:
+        console.print(f"[red]Invalid key '{key}'. Use format: section.key (e.g. llm.model)[/]")
+        raise typer.Exit(1)
+
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+
+    if section not in data:
+        data[section] = {}
+    data[section][key_name] = value
+
+    # Simple TOML write — preserves comments for well-known sections
+    _write_toml(path, data)
+    console.print(f"[bold green]{key} = {value}[/]")
+
+
+def _mask(s: str) -> str:
+    if len(s) <= 8:
+        return "*" * len(s)
+    return s[:4] + "****" + s[-4:]
+
+
+def _write_toml(path: Path, data: dict) -> None:
+    """Write config dict as TOML, preserving structure."""
+    lines: list[str] = []
+    for section in ("github", "llm", "analysis", "linters", "report"):
+        if section in data:
+            lines.append(f"[{section}]")
+            for k, v in data[section].items():
+                if isinstance(v, bool):
+                    lines.append(f"{k} = {'true' if v else 'false'}")
+                elif isinstance(v, (int, float)):
+                    lines.append(f"{k} = {v}")
+                else:
+                    lines.append(f'{k} = "{v}"')
+            lines.append("")
+    path.write_text("\n".join(lines))
 
 
 @app.command()
