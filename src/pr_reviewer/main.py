@@ -29,6 +29,7 @@ from pr_reviewer.report.models import Report, FileAnalysis, Finding, FileLocatio
 from pr_reviewer.report.generator import build_report
 from pr_reviewer.report.formatter import format_report
 from pr_reviewer.report.renderer import render_html, render_markdown, detect_platform
+from pr_reviewer.llm.translator import translate_file_analysis
 from pr_reviewer.utils.git import ensure_repo_cloned, get_file_content
 
 app = typer.Typer(
@@ -152,19 +153,25 @@ def review(
                             confidence=f.get("confidence", 0.0),
                             code_snippet=snippet,
                         ))
-                    file_analyses.append(FileAnalysis(
+                    fa = FileAnalysis(
                         file_path=cf.path,
                         summary=parsed.get("summary", ""),
+                        diff=cf.diff,
+                        additions=cf.additions,
+                        deletions=cf.deletions,
                         findings=findings,
                         dependencies_impact=parsed.get("dependencies_impact", ""),
                         linter_correlation=parsed.get("linter_correlation", ""),
-                    ))
+                    )
+                    # Translate to Chinese
+                    translate_file_analysis(fa, settings.llm)
+                    file_analyses.append(fa)
                 else:
                     console.print(f"  [yellow]Failed to parse LLM response for {cf.path}[/]")
-                    file_analyses.append(FileAnalysis(file_path=cf.path))
+                    file_analyses.append(FileAnalysis(file_path=cf.path, diff=cf.diff, additions=cf.additions, deletions=cf.deletions))
             else:
                 console.print(f"  [red]LLM call failed for {cf.path}[/]")
-                file_analyses.append(FileAnalysis(file_path=cf.path))
+                file_analyses.append(FileAnalysis(file_path=cf.path, diff=cf.diff, additions=cf.additions, deletions=cf.deletions))
 
             progress.update(task, advance=1)
 

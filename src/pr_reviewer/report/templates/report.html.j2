@@ -58,7 +58,8 @@
   .file .fpath { font-size: 16px; font-weight: 700; }
   .file .fopen { font-size: 11px; color: #888; text-decoration: none; border-bottom: 1px dotted #aaa; }
   .file .fopen:hover { color: #000; border-color: #000; }
-  .file .fsum { font-size: 13px; color: #555; margin: 8px 0 18px 0; padding-left: 0; line-height: 1.7; }
+  .file .fsum { font-size: 13px; color: #111; margin: 8px 0 18px 0; padding-left: 0; line-height: 1.7; }
+  .file .fsum .en { display: block; font-size: 11px; color: #888; margin-top: 4px; }
 
   /* ── finding ─── */
   .fnd { margin-bottom: 20px; padding: 12px 0 12px 18px; border-left: 4px solid #ccc; }
@@ -81,11 +82,14 @@
   .fnd .fmeta a:hover { border-color: #000; }
 
   .fnd .ftitle { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
-  .fnd .fdesc { font-size: 13px; color: #333; line-height: 1.7; margin-bottom: 12px; }
+  .fnd .ftitle .en { display: block; font-size: 12px; font-weight: 400; color: #888; }
+  .fnd .fdesc { font-size: 13px; color: #111; line-height: 1.7; margin-bottom: 4px; }
+  .fnd .fdesc .en { display: block; font-size: 11px; color: #888; margin-top: 4px; }
 
   /* ── suggestion block ─── */
   .sug { border: 1px solid #000; padding: 12px 16px; margin-bottom: 14px; font-size: 13px; line-height: 1.7; }
   .sug .suglbl { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; color: #888; margin-bottom: 4px; }
+  .sug .en { display: block; font-size: 11px; color: #888; margin-top: 6px; }
 
   /* ── code block ─── */
   .codebox { border: 1px solid #000; margin-bottom: 14px; }
@@ -99,6 +103,18 @@
   .codebox .ln a { color: #bbb; text-decoration: none; }
   .codebox .ln a:hover { color: #000; }
   .codebox .cmt { color: #aaa; font-style: italic; }
+
+  /* ── diff block ─── */
+  .diffbox { border: 1px solid #000; margin-bottom: 18px; }
+  .diffbox .diffhd { font-size: 10px; color: #888; padding: 6px 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; font-weight: 500; }
+  .diffbox .diffhd a { color: #111; text-decoration: none; border-bottom: 1px dotted #aaa; font-size: 10px; }
+  .diffbox .diffhd a:hover { border-color: #000; }
+  .diffbox pre { margin: 0; padding: 12px 0; overflow-x: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.8; }
+  .diffbox .dline { display: block; padding: 0 12px; white-space: pre; }
+  .diffbox .dline.add { background: #e6ffec; color: #1a7f37; }
+  .diffbox .dline.del { background: #ffebe9; color: #cf222e; }
+  .diffbox .dline.hdr { background: #f0f0ff; color: #555; font-weight: 500; }
+  .diffbox .dline .dn { display: inline-block; width: 40px; text-align: right; color: #bbb; margin-right: 14px; user-select: none; font-size: 11px; }
 
   /* ── no findings ─── */
   .clean { font-size: 13px; color: #888; padding: 12px 0 12px 18px; border-left: 4px solid #0a0; }
@@ -155,17 +171,18 @@
 
 <!-- ══════════════════════ CROSS-CUTTING ══════════════════════ -->
 {% if report.cross_cutting %}
-<div class="sec">Cross-cutting</div>
+<div class="sec">跨文件问题 / Cross-cutting</div>
 {% for cc in report.cross_cutting %}
 <div class="cc {{ cc.severity }}">
-  <strong>{{ cc.title }}</strong>
-  {% if cc.description %}<span style="color:#888;"> &mdash; {{ cc.description }}</span>{% endif %}
+  <strong>{{ cc.title_zh or cc.title }}</strong>
+  {% if cc.title_zh and cc.title %}<span style="color:#888;"> &mdash; {{ cc.title }}</span>{% endif %}
+  {% if cc.description_zh or cc.description %}<span style="color:#888;font-size:11px;"> &mdash; {{ cc.description_zh or cc.description }}</span>{% endif %}
 </div>
 {% endfor %}
 {% endif %}
 
 <!-- ══════════════════════ FILES ══════════════════════ -->
-<div class="sec">Files</div>
+<div class="sec">文件分析 / Files</div>
 
 {% for file in report.files %}
 <div class="file">
@@ -174,8 +191,31 @@
     <a class="fopen" href="{{ source_url(file.file_path, 1) }}" target="_blank">open &nearr;</a>
   </div>
 
-  {% if file.summary %}
-  <div class="fsum">{{ file.summary }}</div>
+  {% if file.summary_zh or file.summary %}
+  <div class="fsum">
+    {{ file.summary_zh or file.summary }}
+    {% if file.summary_zh and file.summary %}<span class="en">{{ file.summary }}</span>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if file.diff %}
+  <div class="diffbox">
+    <div class="diffhd">
+      <span>变更 / Changes &mdash; +{{ file.additions }} &minus;{{ file.deletions }}</span>
+      <a href="{{ source_url(file.file_path, 1) }}" target="_blank">查看源码 &nearr;</a>
+    </div>
+    <pre>{% for line in file.diff.split('\n') %}
+{% if line.startswith('@@') %}
+<span class="dline hdr">{{ line }}</span>
+{% elif line.startswith('+') %}
+<span class="dline add">{{ line }}</span>
+{% elif line.startswith('-') %}
+<span class="dline del">{{ line }}</span>
+{% else %}
+<span class="dline">{{ line }}</span>
+{% endif %}
+{% endfor %}</pre>
+  </div>
   {% endif %}
 
   {% for finding in file.findings %}
@@ -195,17 +235,23 @@
       </span>
     </div>
 
-    <div class="ftitle">{{ finding.title }}</div>
+    <div class="ftitle">
+      {{ finding.title_zh or finding.title }}
+      {% if finding.title_zh and finding.title %}<span class="en">{{ finding.title }}</span>{% endif %}
+    </div>
 
-    {% if finding.description %}
-    <div class="fdesc">{{ finding.description }}</div>
+    {% if finding.description_zh or finding.description %}
+    <div class="fdesc">
+      {{ finding.description_zh or finding.description }}
+      {% if finding.description_zh and finding.description %}<span class="en">{{ finding.description }}</span>{% endif %}
+    </div>
     {% endif %}
 
     {% if finding.code_snippet %}
     <div class="codebox">
       <div class="codehd">
         <span>{{ file.file_path }}</span>
-        <a href="{{ source_url(file.file_path, finding.location.line_start or 1) }}" target="_blank">view source &nearr;</a>
+        <a href="{{ source_url(file.file_path, finding.location.line_start or 1) }}" target="_blank">查看源码 &nearr;</a>
       </div>
       <pre>{% set lines = finding.code_snippet.split('\n') %}
 {% for line in lines %}
@@ -216,17 +262,18 @@
     </div>
     {% endif %}
 
-    {% if finding.suggestion %}
+    {% if finding.suggestion_zh or finding.suggestion %}
     <div class="sug">
-      <div class="suglbl">&rarr; SUGGESTION</div>
-      {{ finding.suggestion }}
+      <div class="suglbl">&rarr; 建议 / SUGGESTION</div>
+      {{ finding.suggestion_zh or finding.suggestion }}
+      {% if finding.suggestion_zh and finding.suggestion %}<span class="en">{{ finding.suggestion }}</span>{% endif %}
     </div>
     {% endif %}
   </div>
   {% endfor %}
 
   {% if not file.findings %}
-  <div class="clean">No issues found.</div>
+  <div class="clean">未发现问题 / No issues found.</div>
   {% endif %}
 </div>
 <hr class="thin">
