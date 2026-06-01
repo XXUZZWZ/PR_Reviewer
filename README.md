@@ -140,3 +140,6 @@ save_path = ""                  # 留空 = 自动保存到 reports/
   → 生成报告（JSON + MD + HTML）
   → 终端预览
 ```
+
+## 视频地址 
+【PR_Reviewer】 https://www.bilibili.com/video/BV1MMVo63EbY/?share_source=copy_web&vd_source=dd713f4998af3436a24379199c421d89
